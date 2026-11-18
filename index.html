@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portal de Áreas y PDF — AutoCAD</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --ok: #10b981;
+      --err: #ef4444;
+    }
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .container { width: 100%; max-width: 720px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 28px; box-shadow: 0 20px 45px rgba(0,0,0,0.4); }
+    h1 { margin: 0 0 6px; font-size: 1.45rem; }
+    p.sub { margin: 0 0 22px; color: var(--muted); font-size: 0.95rem; }
+    .dropzone { border: 2px dashed var(--border); border-radius: 10px; padding: 30px 18px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; margin-bottom: 20px; }
+    .dropzone.dragover, .dropzone:hover { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+    .dropzone input { display: none; }
+    .file-name { margin-top: 8px; font-weight: 600; color: var(--accent); }
+    .section-title { font-size: 0.9rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 18px 0 10px; }
+    .zone-form { display: flex; gap: 8px; margin-bottom: 10px; }
+    .zone-form input { background: #0f172a; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 12px; font-size: 0.92rem; }
+    .zone-form input[type="text"] { flex: 1; }
+    .zone-form input[type="number"] { width: 110px; }
+    button { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-weight: 600; cursor: pointer; transition: background .2s; }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-full { width: 100%; padding: 13px; font-size: 1rem; margin-top: 12px; }
+    .zone-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+    .chip { background: #0f172a; border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px; }
+    .chip button { background: transparent; color: var(--muted); padding: 0; font-size: 1rem; line-height: 1; }
+    .status { margin-top: 18px; padding: 14px; border-radius: 8px; display: none; font-size: 0.92rem; }
+    .status.loading { display: block; background: rgba(59,130,246,0.12); border: 1px solid var(--accent); }
+    .status.ok { display: block; background: rgba(16,185,129,0.12); border: 1px solid var(--ok); }
+    .status.err { display: block; background: rgba(239,68,68,0.12); border: 1px solid var(--err); }
+    .downloads { display: flex; gap: 10px; margin-top: 12px; }
+    .downloads a { flex: 1; text-align: center; text-decoration: none; background: var(--ok); color: #052e16; font-weight: 700; padding: 10px; border-radius: 8px; }
+    .downloads a.secondary { background: #e2e8f0; color: #0f172a; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Procesador Automático de Áreas y PDF</h1>
+    <p class="sub">Sube un plano <code>.dwg</code> para generar áreas con 70% de transparencia, tabla lateral y PDF en formato ISO A1.</p>
+
+    <label class="dropzone" id="dropzone">
+      <div>Haz clic o arrastra aquí tu archivo <strong>.dwg</strong></div>
+      <div class="file-name" id="fileName">Ningún archivo seleccionado</div>
+      <input type="file" id="fileInput" accept=".dwg" />
+    </label>
+
+    <div class="section-title">Zonas adicionales opcionales (presiona Enter para añadir)</div>
+    <div class="zone-form">
+      <input type="text" id="zoneName" placeholder="Nombre de la zona (ej. Bodega Fría)" />
+      <input type="number" id="zoneColor" min="1" max="255" placeholder="ACI (1-255)" />
+      <button type="button" id="addZoneBtn">Añadir</button>
+    </div>
+    <div class="zone-list" id="zoneList"></div>
+
+    <button type="button" class="btn-full" id="processBtn" disabled>Procesar Plano y Generar PDF</button>
+
+    <div class="status" id="statusBox"></div>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const fileName = document.getElementById('fileName');
+    const processBtn = document.getElementById('processBtn');
+    const statusBox = document.getElementById('statusBox');
+    const zoneName = document.getElementById('zoneName');
+    const zoneColor = document.getElementById('zoneColor');
+    const addZoneBtn = document.getElementById('addZoneBtn');
+    const zoneList = document.getElementById('zoneList');
+
+    let selectedFile = null;
+    const extraZones = [];
+
+    function renderZones() {
+      zoneList.innerHTML = '';
+      extraZones.forEach((z, idx) => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.innerHTML = `<span>${z.nombre} (ACI ${z.color})</span><button type="button" aria-label="Quitar">&times;</button>`;
+        chip.querySelector('button').onclick = () => { extraZones.splice(idx, 1); renderZones(); };
+        zoneList.appendChild(chip);
+      });
+    }
+
+    function addZone() {
+      const nombre = zoneName.value.trim();
+      const color = parseInt(zoneColor.value, 10);
+      if (!nombre) { alert('Escribe un nombre de zona válido.'); return; }
+      if (isNaN(color) || color < 1 || color > 255) { alert('Ingresa un código ACI entero entre 1 y 255.'); return; }
+      if (extraZones.some(z => z.nombre.toLowerCase() === nombre.toLowerCase())) {
+        alert('Esa zona ya fue agregada.'); return;
+      }
+      extraZones.push({ nombre, color });
+      zoneName.value = '';
+      zoneColor.value = '';
+      zoneName.focus();
+      renderZones();
+    }
+
+    addZoneBtn.onclick = addZone;
+    [zoneName, zoneColor].forEach(el => {
+      el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addZone(); } });
+    });
+
+    function setFile(file) {
+      if (!file || !file.name.toLowerCase().endsWith('.dwg')) {
+        alert('Por favor selecciona un archivo .dwg válido.');
+        return;
+      }
+      selectedFile = file;
+      fileName.textContent = file.name;
+      processBtn.disabled = false;
+    }
+
+    fileInput.onchange = e => setFile(e.target.files[0]);
+    dropzone.ondragover = e => { e.preventDefault(); dropzone.classList.add('dragover'); };
+    dropzone.ondragleave = () => dropzone.classList.remove('dragover');
+    dropzone.ondrop = e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      setFile(e.dataTransfer.files[0]);
+    };
+
+    processBtn.onclick = async () => {
+      if (!selectedFile) return;
+      processBtn.disabled = true;
+      statusBox.className = 'status loading';
+      statusBox.textContent = 'Procesando plano en AutoCAD (accoreconsole)... Esto puede tardar unos segundos.';
+
+      const form = new FormData();
+      form.append('archivo', selectedFile);
+      form.append('zonas_extra', JSON.stringify(extraZones));
+
+      try {
+        const res = await fetch('/api/procesar', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          statusBox.className = 'status err';
+          statusBox.textContent = data.detail || 'Error al procesar el plano.';
+        } else {
+          statusBox.className = 'status ok';
+          statusBox.innerHTML = `
+            <div><strong>Listo:</strong> plano y PDF generados correctamente.</div>
+            <div class="downloads">
+              <a href="${data.pdf_url}" download="${data.pdf_name}">Descargar PDF (A1)</a>
+              <a class="secondary" href="${data.dwg_url}" download="${data.dwg_name}">Descargar DWG Procesado</a>
+            </div>
+          `;
+        }
+      } catch (err) {
+        statusBox.className = 'status err';
+        statusBox.textContent = 'Error de conexión con el servidor.';
+      } finally {
+        processBtn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>
